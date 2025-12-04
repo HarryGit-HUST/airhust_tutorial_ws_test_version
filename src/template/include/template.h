@@ -20,7 +20,8 @@
 
 using namespace std;
 
-#define ALTITUDE 1.2f
+// 原代码：#define ALTITUDE 1.2f
+extern float ALTITUDE; // 声明全局变量
 
 mavros_msgs::PositionTarget setpoint_raw;
 
@@ -31,7 +32,7 @@ mavros_msgs::State current_state;
 void state_cb(const mavros_msgs::State::ConstPtr &msg);
 void state_cb(const mavros_msgs::State::ConstPtr &msg)
 {
-	current_state = *msg;
+    current_state = *msg;
 }
 
 /************************************************************************
@@ -49,19 +50,26 @@ bool flag_init_position = false;
 void local_pos_cb(const nav_msgs::Odometry::ConstPtr &msg);
 void local_pos_cb(const nav_msgs::Odometry::ConstPtr &msg)
 {
-	local_pos = *msg;
-	tf::quaternionMsgToTF(local_pos.pose.pose.orientation, quat);
-	tf::Matrix3x3(quat).getRPY(roll, pitch, yaw);
-	if (flag_init_position == false && (local_pos.pose.pose.position.z != 0))
-	{
-		init_position_x_take_off = local_pos.pose.pose.position.x;
-		init_position_y_take_off = local_pos.pose.pose.position.y;
-		init_position_z_take_off = local_pos.pose.pose.position.z;
-		init_yaw_take_off = yaw;
-		flag_init_position = true;
-	}
+    local_pos = *msg;
+    tf::quaternionMsgToTF(local_pos.pose.pose.orientation, quat);
+    tf::Matrix3x3(quat).getRPY(roll, pitch, yaw);
+    if (flag_init_position == false && (local_pos.pose.pose.position.z != 0))
+    {
+        init_position_x_take_off = local_pos.pose.pose.position.x;
+        init_position_y_take_off = local_pos.pose.pose.position.y;
+        init_position_z_take_off = local_pos.pose.pose.position.z;
+        init_yaw_take_off = yaw;
+        flag_init_position = true;
+    }
+    if (flag_init_position == false && (local_pos.pose.pose.position.z != 0))
+    {
+        init_position_x_take_off = local_pos.pose.pose.position.x;
+        init_position_y_take_off = local_pos.pose.pose.position.y;
+        ROS_INFO("起飞点偏移初始化：X=%.2f, Y=%.2f",
+                 init_position_x_take_off, init_position_y_take_off);
+        flag_init_position = true;
+    }
 }
-
 
 /************************************************************************
 函数 3: 无人机位置控制
@@ -72,29 +80,6 @@ float mission_pos_cruise_last_position_x = 0;
 float mission_pos_cruise_last_position_y = 0;
 bool mission_pos_cruise_flag = false;
 bool mission_pos_cruise(float x, float y, float z, float target_yaw, float error_max);
-bool mission_pos_cruise(float x, float y, float z, float target_yaw, float error_max)
-{
-	if (mission_pos_cruise_flag == false)
-	{
-		mission_pos_cruise_last_position_x = local_pos.pose.pose.position.x;
-		mission_pos_cruise_last_position_y = local_pos.pose.pose.position.y;
-		mission_pos_cruise_flag = true;
-	}
-	setpoint_raw.type_mask = /*1 + 2 + 4 */ +8 + 16 + 32 + 64 + 128 + 256 + 512 /*+ 1024 */ + 2048;
-	setpoint_raw.coordinate_frame = 1;
-	setpoint_raw.position.x = x + init_position_x_take_off;
-	setpoint_raw.position.y = y + init_position_y_take_off;
-	setpoint_raw.position.z = z + init_position_z_take_off;
-	setpoint_raw.yaw = target_yaw;
-	ROS_INFO("now (%.2f,%.2f,%.2f,%.2f) to ( %.2f, %.2f, %.2f, %.2f)", local_pos.pose.pose.position.x ,local_pos.pose.pose.position.y, local_pos.pose.pose.position.z, target_yaw * 180.0 / M_PI, x + init_position_x_take_off, y + init_position_y_take_off, z + init_position_z_take_off, target_yaw * 180.0 / M_PI );
-	if (fabs(local_pos.pose.pose.position.x - x - init_position_x_take_off) < error_max && fabs(local_pos.pose.pose.position.y - y - init_position_y_take_off) < error_max && fabs(local_pos.pose.pose.position.z - z - init_position_z_take_off) < error_max && fabs(yaw - target_yaw) < 0.1)
-	{
-		ROS_INFO("到达目标点，巡航点任务完成");
-		mission_pos_cruise_flag = false;
-		return true;
-	}
-	return false;
-}
 
 /************************************************************************
 函数 4:降落
@@ -108,19 +93,19 @@ ros::Time precision_land_last_time;
 bool precision_land();
 bool precision_land()
 {
-	if (!precision_land_init_position_flag)
-	{
-		precision_land_init_position_x = local_pos.pose.pose.position.x;
-		precision_land_init_position_y = local_pos.pose.pose.position.y;
+    if (!precision_land_init_position_flag)
+    {
+        precision_land_init_position_x = local_pos.pose.pose.position.x;
+        precision_land_init_position_y = local_pos.pose.pose.position.y;
         precision_land_last_time = ros::Time::now();
-		precision_land_init_position_flag = true;
-	}
-	setpoint_raw.position.x = precision_land_init_position_x;
-	setpoint_raw.position.y = precision_land_init_position_y;
-	setpoint_raw.position.z = -0.15;
-	setpoint_raw.type_mask = /*1 + 2 + 4 + 8 + 16 + 32*/ +64 + 128 + 256 + 512 /*+ 1024 + 2048*/;
-	setpoint_raw.coordinate_frame = 1;
-    if(ros::Time::now() - precision_land_last_time > ros::Duration(5.0))
+        precision_land_init_position_flag = true;
+    }
+    setpoint_raw.position.x = precision_land_init_position_x;
+    setpoint_raw.position.y = precision_land_init_position_y;
+    setpoint_raw.position.z = -0.15;
+    setpoint_raw.type_mask = /*1 + 2 + 4 + 8 + 16 + 32*/ +64 + 128 + 256 + 512 /*+ 1024 + 2048*/;
+    setpoint_raw.coordinate_frame = 1;
+    if (ros::Time::now() - precision_land_last_time > ros::Duration(5.0))
     {
         ROS_INFO("Precision landing complete.");
         precision_land_init_position_flag = false; // Reset for next landing
