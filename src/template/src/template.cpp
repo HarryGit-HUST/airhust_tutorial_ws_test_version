@@ -34,6 +34,9 @@ float final_target_y = -0.3;
 float task3_target_x = 36.0;
 float task3_target_y = 1.0;
 
+// 新增：悬停计时全局变量（仅用于任务1）
+ros::Time hover_start_time;
+
 // 激光雷达相关
 sensor_msgs::LaserScan laser_data;
 int center_idx = 0;
@@ -461,7 +464,7 @@ bool mission_pos_cruise(float x, float y, float z, float target_yaw, float error
     return (x_ok && y_ok && z_ok && yaw_ok);
 }
 
-// ===================== 主函数（修复发布器语法）=====================
+// ===================== 主函数（仅修改任务1实现10秒悬停）=====================
 int main(int argc, char **argv)
 {
     setlocale(LC_ALL, "");
@@ -496,9 +499,10 @@ int main(int argc, char **argv)
     // 打印配置
     ROS_INFO("=== 无人机避障巡航（最终修复版）===");
     ROS_INFO("核心功能：");
-    ROS_INFO("  1. 起飞稳定后永久开启避障（仅起飞判断高度）");
-    ROS_INFO("  2. PID强制高度锁定（目标=%.2f米，误差≤0.1m）", ALTITUDE);
-    ROS_INFO("  3. 正对柱子：固定绕障方向，无左右晃，顺畅通过");
+    ROS_INFO("  1. 起飞稳定后悬停10秒，再执行后续任务");
+    ROS_INFO("  2. 起飞稳定后永久开启避障（仅起飞判断高度）");
+    ROS_INFO("  3. PID强制高度锁定（目标=%.2f米，误差≤0.1m）", ALTITUDE);
+    ROS_INFO("  4. 正对柱子：固定绕障方向，无左右晃，顺畅通过");
     ROS_INFO("避障参数：安全距离=%.2f米，横移限制=%.2f米，横向速度=%.2f m/s",
              SAFE_DIST, MAX_YAW_OFFSET, MAX_SIDE_SPEED);
     ROS_INFO("自动启动任务...");
@@ -564,15 +568,16 @@ int main(int argc, char **argv)
             last_request = ros::Time::now();
         }
 
-        // 起飞悬停1秒（确保高度稳定）
+        // 起飞稳定后，启动任务1并记录悬停开始时间
         if (current_state.armed && current_state.mode == "OFFBOARD" &&
             fabs(local_pos.pose.pose.position.z - ALTITUDE) < 0.2)
         {
             if ((ros::Time::now() - last_request) > ros::Duration(1.0))
             {
                 mission_num = 1;
+                hover_start_time = ros::Time::now(); // 记录悬停开始时间
                 last_request = ros::Time::now();
-                ROS_INFO("起飞完成，进入任务1（悬停稳定）！");
+                ROS_INFO("起飞完成，进入任务1（悬停10秒）！");
                 break;
             }
         }
@@ -591,19 +596,34 @@ int main(int argc, char **argv)
 
         switch (mission_num)
         {
-        // 任务1：悬停稳定（强制高度）
+        // 任务1：修改为悬停10秒（核心改动）
         case 1:
-            if (mission_pos_cruise(0, 0, ALTITUDE, 0.0, err_max) ||
-                (ros::Time::now() - last_request) > ros::Duration(3.0))
+        {
+            // 强制悬停在起飞点上方（位置不变）
+            setpoint_raw.position.x = init_position_x_take_off;
+            setpoint_raw.position.y = init_position_y_take_off;
+            setpoint_raw.position.z = height_pid_control(local_pos.pose.pose.position.z, ALTITUDE);
+            setpoint_raw.yaw = init_yaw_take_off;
+            setpoint_raw.type_mask = 8 + 16 + 32 + 64 + 128 + 256 + 512 + 2048;
+            setpoint_raw.coordinate_frame = 1;
+
+            // 计算已悬停时长
+            float hover_elapsed = (ros::Time::now() - hover_start_time).toSec();
+            ROS_INFO_THROTTLE(0.5, "【任务1-悬停】已悬停%.1f秒/10秒 | 高度=%.2f米",
+                              hover_elapsed, local_pos.pose.pose.position.z);
+
+            // 悬停满10秒后切换任务2
+            if (hover_elapsed >= 10.0)
             {
-                ROS_INFO("任务1完成：悬停稳定！当前高度=%.2f米", local_pos.pose.pose.position.z);
+                ROS_INFO("任务1完成：悬停10秒结束！当前高度=%.2f米", local_pos.pose.pose.position.z);
                 mission_num = 2;
                 mission_pos_cruise_flag = false;
                 last_request = ros::Time::now();
             }
             break;
+        }
 
-        // 任务2：巡航至第一个目标点（绕柱优化）
+        // 任务2：巡航至第一个目标点（无改动）
         case 2:
         {
             mission_pos_cruise(final_target_x, final_target_y, ALTITUDE, 0.0, err_max);
@@ -623,7 +643,7 @@ int main(int argc, char **argv)
             break;
         }
 
-        // 任务3：巡航至第二个目标点（绕柱优化）
+        // 任务3：巡航至第二个目标点（无改动）
         case 3:
         {
             mission_pos_cruise(task3_target_x, task3_target_y, ALTITUDE, 0.0, err_max);
@@ -642,7 +662,7 @@ int main(int argc, char **argv)
             break;
         }
 
-        // 任务4：降落
+        // 任务4：降落（无改动）
         case 4:
             if (precision_land())
             {
